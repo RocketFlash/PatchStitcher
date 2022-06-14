@@ -39,6 +39,10 @@ if __name__ == '__main__':
     parser.add_argument('--multidirect', action='store_true', help='use multidirection search')
     parser.add_argument('--save_vis', type=bool, default=True, help='save stitcher steps visualization')
     parser.add_argument('--use_loftr', action='store_true', help='use loftr for homography calculation')
+    parser.add_argument('--use_dhe', action='store_true', help='use deep homography estimation')
+    parser.add_argument('--use_sift', action='store_true', help='use SIFT')
+    parser.add_argument('--use_kp_filtering', action='store_true', help='use keypoint filtering')
+    parser.add_argument('--no_metric', action='store_true', help='do not use metric learning')
     parser.add_argument('--loftr_conf_thresh', type=float, default=0, help='loftr confidence threshold')
     parser.add_argument('--exp_name', type=str, default='exp1', help='name of experiment')
     parser.add_argument('--tmp', default="./results", help='tmp')
@@ -63,6 +67,12 @@ if __name__ == '__main__':
 
     print(f'Device: {device}')
 
+    scan_idx = source.stem
+    exp_path = save_path / args.exp_name
+    save_path_scan = exp_path /scan_idx
+    save_path_stitched = save_path_scan / 'stitched'
+    save_path_stitched.mkdir(exist_ok=True, parents=True)
+
     stitcher = PatchStitcher(model_path,
                              device=device,
                              output_images_scale=args.output_scale,
@@ -74,14 +84,14 @@ if __name__ == '__main__':
                              num_workers=args.num_workers,
                              vis_save_path=args.tmp,
                              use_loftr=args.use_loftr,
+                             use_sift=args.use_sift,
+                             use_dhe=args.use_dhe,
+                             use_metric=not args.no_metric,
+                             use_kp_filtering=args.use_kp_filtering,
                              loftr_conf_thresh=args.loftr_conf_thresh,
                              save_vis=args.save_vis)
 
-    scan_idx = source.stem
-    exp_path = save_path / args.exp_name
-    save_path_scan = exp_path /scan_idx
-    save_path_stitched = save_path_scan / 'stitched'
-    save_path_stitched.mkdir(exist_ok=True, parents=True)
+    
     for call_idx in range(4):
 
         call_folder = source / f'call_{call_idx}'

@@ -3,7 +3,7 @@ from .utils import split_image_on_patches
 from torchvision import transforms
 
 class TilesDataset(BaseDataset):
-    """Toles dataset
+    """Tiles dataset
     
     Args:
         image     (np.array): image for tiles splitting
@@ -49,3 +49,5 @@ class TilesDataset(BaseDataset):
         
     def __len__(self):
         return len(self.tiles)
+
+        

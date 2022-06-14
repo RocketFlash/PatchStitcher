@@ -10,7 +10,8 @@ import matplotlib
 import matplotlib.cm as cm
 
 
-def crop(image, only_lr=False, only_ud=False):
+def crop(img, only_lr=False, only_ud=False):
+    image = img.copy()
     y_nonzero, x_nonzero, _ = np.nonzero(image)
     if only_lr:
         return image[:, np.min(x_nonzero):np.max(x_nonzero)]
@@ -149,11 +150,28 @@ def rotate_around_point(point, radians, origin=(0, 0)):
 #     s = d/mdev if mdev else 0.
 #     return s<m
 
-# def find_outliers(a, m=2):
-#     return abs(a - np.median(a)) < m * np.std(a)
-
 def find_outliers(a, m=2):
-    return abs(a - np.median(a))<m
+    return abs(a - np.median(a)) < m * np.std(a)
+
+# def find_outliers(a, m=2):
+#     return abs(a - np.median(a))<m
+
+def find_outliers_angle(kps1, kps2, m=1):
+    ang1 = np.arctan2(kps1[:, 1], kps1[:, 0])
+    ang2 = np.arctan2(kps2[:, 1], kps2[:, 0])
+
+    angle_difference = ang2 - ang1
+    angles = ((np.rad2deg(angle_difference % (2 * np.pi)) - 180) % 360) - 180
+
+    outliers_mask = find_outliers(angles, m=m)
+    
+    return outliers_mask
+
+
+def find_outliers_distances(kps_s, kps_t, m=1):
+    distances = [np.linalg.norm(kp_s-kp_t)for kp_s, kp_t in zip(kps_s, kps_t)]
+    outliers_mask = find_outliers(distances, m=m)
+    return outliers_mask
 
 
 def get_device(device_str):
@@ -167,6 +185,10 @@ def xywh2xyxy(coords):
     x, y, w, h = coords
     return [(x,y), (x+w,y+h)]
 
+def draw_visualization(image_small, coords, color=(255,0,0)): 
+    image = image_small.copy()
+    cv2.rectangle(image,coords[0],coords[1], color,5)
+    return image
 
 def plot_tiles_similarity(similarity_matrix, save_path='./img.png'):
     fig, ax = plt.subplots( nrows=1, ncols=1 )
@@ -230,3 +252,28 @@ def show_images(images, n_col=3, save_name=None):
     else:
         plt.savefig(save_name)
         plt.close(fig)
+
+
+def make_border(source_image, target_image, is_horizontal):
+        s_h, s_w, s_c = source_image.shape
+        t_h, t_w, t_c = target_image.shape
+
+        if is_horizontal:
+            if s_h != t_h:
+                border_top = (max(s_h, t_h)-min(s_h, t_h)) // 2
+                border_bot = (max(s_h, t_h)-min(s_h, t_h)) - border_top
+                if s_h>t_h:
+                    target_image = cv2.copyMakeBorder(target_image, border_top, border_bot, 0, 0, borderType=cv2.BORDER_CONSTANT)
+                else:
+                    source_image = cv2.copyMakeBorder(source_image, border_top, border_bot, 0, 0, borderType=cv2.BORDER_CONSTANT)
+
+        else:
+            if s_w != t_w:
+                border_left = (max(s_w, t_w)-min(s_w, t_w)) // 2
+                border_right = (max(s_w, t_w)-min(s_w, t_w)) - border_left
+                if s_w>t_w:
+                    target_image = cv2.copyMakeBorder(target_image, 0, 0, border_left, border_right, borderType=cv2.BORDER_CONSTANT)
+                else:
+                    source_image = cv2.copyMakeBorder(source_image, 0, 0, border_left, border_right, borderType=cv2.BORDER_CONSTANT)
+
+        return source_image, target_image
