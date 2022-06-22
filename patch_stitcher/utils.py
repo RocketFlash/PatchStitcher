@@ -277,3 +277,26 @@ def make_border(source_image, target_image, is_horizontal):
                     source_image = cv2.copyMakeBorder(source_image, 0, 0, border_left, border_right, borderType=cv2.BORDER_CONSTANT)
 
         return source_image, target_image
+
+
+def resize_border(source_image, target_image, is_horizontal):
+        s_h, s_w, s_c = source_image.shape
+        t_h, t_w, t_c = target_image.shape
+
+        if is_horizontal:
+            if s_h != t_h:
+                r_h = max(s_h, t_h)
+                if s_h>t_h:
+                    target_image = cv2.resize(target_image, (t_w, r_h))
+                else:
+                    source_image = cv2.resize(source_image, (s_w, r_h))
+
+        else:
+            if s_w != t_w:
+                r_w = max(s_w, t_w)
+                if s_w>t_w:
+                    target_image = cv2.resize(target_image, (r_w, t_h))
+                else:
+                    source_image = cv2.resize(source_image, (r_w, s_h))
+
+        return source_image, target_image

@@ -1,6 +1,7 @@
 dataset/*
 results/*
 patch_stitcher/weights/
+patch_stitcher/dht/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

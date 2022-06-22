@@ -31,7 +31,6 @@ class PatchStitcher:
     def __init__(self, model_path,
                        device='cpu',
                        output_images_scale=0.5,
-                       input_size=(400,400),
                        window_size=500,
                        step_size=20,
                        batch_size=50,
@@ -43,7 +42,9 @@ class PatchStitcher:
                        use_metric=True,
                        use_sift=False,
                        use_kp_filtering=False,
-                       save_vis=True):
+                       save_vis=True,
+                       pyramid_search=False,
+                       fast_search=True):
         self.device = device
         
         if model_path is None:
@@ -52,18 +53,18 @@ class PatchStitcher:
 
             self.transform = transforms.Compose([
                                         transforms.ToPILImage(),
-                                        transforms.Resize(input_size),
+                                        transforms.Resize(400, 200),
                                         np.float32,
                                         transforms.ToTensor(),
                                         fixed_image_standardization])
             self.model = InceptionResnetV1(pretrained='vggface2').to(device).eval()
         else:
             self.model = torch.jit.load(model_path, map_location=device).to(device).eval()
-            self.transform = A.Compose([A.Resize(*input_size),
-                                    A.CLAHE (clip_limit=4.0, tile_grid_size=(8, 8), p=1),
-                                    A.Normalize(mean=[0.485, 0.456, 0.406],
-                                                std=[0.229, 0.224, 0.225]),
-                                    ToTensorV2()])
+            self.transform = A.Compose([A.Resize(400, 200),
+                                        A.CLAHE (clip_limit=4.0, tile_grid_size=(8, 8), p=1),
+                                        A.Normalize(mean=[0.485, 0.456, 0.406],
+                                                    std=[0.229, 0.224, 0.225]),
+                                        ToTensorV2()])
 
     
         self.window_size = window_size
@@ -79,6 +80,8 @@ class PatchStitcher:
         self.use_dhe = use_dhe
         self.use_metric = use_metric
         self.use_sift = use_sift
+        self.pyramid_search = pyramid_search
+        self.fast_search = fast_search
 
         if self.use_dhe:
             from .dhe import DHE
@@ -105,6 +108,13 @@ class PatchStitcher:
     def __call__(self, images_paths, is_horizontal=True, is_multidirect=False):
         images = [get_image(image_path) for image_path in images_paths]
         return self.get_stitched_image(images, is_horizontal, is_multidirect)
+    
+
+    def get_embeddings(self, data):
+        with torch.no_grad():
+            data = data.to(self.device) 
+            output_embeddings = self.model(data).cpu().numpy() 
+        return output_embeddings
 
 
     def get_tiles_embeddings(self, data_loader):
@@ -112,11 +122,9 @@ class PatchStitcher:
         target_coordinates = []
         
         for tiles_batch, coords_batch in data_loader:
-            with torch.no_grad():
-                tiles_batch = tiles_batch.to(self.device) 
-                output_embeddings = self.model(tiles_batch).cpu().numpy() 
-                target_embeddings.append(output_embeddings)
-                target_coordinates.append(coords_batch)
+            output_embeddings = self.get_embeddings(tiles_batch)
+            target_embeddings.append(output_embeddings)
+            target_coordinates.append(coords_batch)
 
         target_embeddings = np.concatenate(target_embeddings, axis=0)
         target_coordinates = np.concatenate(target_coordinates, axis=0)
@@ -129,6 +137,19 @@ class PatchStitcher:
                                       step_size=self.step_size,
                                       is_horizontal=is_horizontal,
                                       is_multidirect=is_multidirect,   
+                                      transform=self.transform)
+        return DataLoader(source_dataset, 
+                          batch_size=self.batch_size, 
+                          pin_memory=True, 
+                          num_workers=self.num_workers)
+
+
+    def get_patches_dataloader_pyramid(self, image, wind_size, step_size, is_horizontal=True):
+        source_dataset = TilesDataset(image,
+                                      window_size=wind_size,
+                                      step_size=step_size,
+                                      is_horizontal=is_horizontal,
+                                      is_multidirect=False,   
                                       transform=self.transform)
         return DataLoader(source_dataset, 
                           batch_size=self.batch_size, 
@@ -335,20 +356,85 @@ class PatchStitcher:
                     t_img = t_img_warped_trim
 
                 s_img, t_img = make_border(s_img, t_img, is_horizontal)
-                source_data_loader = self.get_patches_dataloader(s_img, is_horizontal, is_multidirect)
-                target_data_loader = self.get_patches_dataloader(t_img, is_horizontal, is_multidirect)
 
-                source_embeddings, source_coordinates = self.get_tiles_embeddings(source_data_loader)
-                target_embeddings, target_coordinates = self.get_tiles_embeddings(target_data_loader)
+                if self.pyramid_search:
+                    s_img_curr = s_img.copy()
+                    t_img_curr = t_img.copy()
+                    sx_offset, sy_offset = 0, 0
+                    tx_offset, ty_offset = 0, 0
 
-                cosine_sim_matrix = cosine_similarity(source_embeddings, target_embeddings)
-                max_similar = np.unravel_index(np.argmax(cosine_sim_matrix), cosine_sim_matrix.shape)
+                    wind_sizes = [200]
+                    step_sizes = [10]
+                    for step in range(len(wind_sizes)):
+                        wind_size, step_size = wind_sizes[step], step_sizes[step]
+                        source_data_loader = self.get_patches_dataloader_pyramid(s_img_curr, wind_size, step_size, is_horizontal)
+                        target_data_loader = self.get_patches_dataloader_pyramid(t_img_curr, wind_size, step_size, is_horizontal)
 
-                source_coords_best = source_coordinates[max_similar[0]]
-                target_coords_best = target_coordinates[max_similar[1]]
+                        source_embeddings, source_coordinates = self.get_tiles_embeddings(source_data_loader)
+                        target_embeddings, target_coordinates = self.get_tiles_embeddings(target_data_loader)
 
-                s_coords = xywh2xyxy(source_coords_best) 
-                t_coords = xywh2xyxy(target_coords_best)
+                        cosine_sim_matrix = cosine_similarity(source_embeddings, target_embeddings)
+                        max_similar = np.unravel_index(np.argmax(cosine_sim_matrix), cosine_sim_matrix.shape)
+
+                        source_coords_best = source_coordinates[max_similar[0]]
+                        target_coords_best = target_coordinates[max_similar[1]]
+
+                        s_coords = xywh2xyxy(source_coords_best) 
+                        t_coords = xywh2xyxy(target_coords_best)
+                        (xs_1, ys_1), (xs_2, ys_2) = s_coords
+                        (xt_1, yt_1), (xt_2, yt_2) = t_coords
+                        s_img_curr = s_img_curr[ys_1:ys_2, xs_1:xs_2]
+                        t_img_curr = t_img_curr[yt_1:yt_2, xt_1:xt_2]
+                        if is_horizontal:
+                            sx_offset += xs_1
+                            tx_offset += xt_1
+                        else:
+                            sy_offset += ys_1
+                            ty_offset += yt_1
+                    s_coords = [(c_x+sx_offset, c_y+sy_offset)for c_x, c_y in s_coords]
+                    t_coords = [(c_x+tx_offset, c_y+ty_offset)for c_x, c_y in t_coords]
+                elif self.fast_search:
+                    constant_offset = 100
+                    offset_x_s = self.window_size if is_horizontal else s_w
+                    offset_y_s = s_h if is_horizontal else self.window_size
+                    offset_xx = constant_offset if is_horizontal else 0
+                    offset_yy = 0 if is_horizontal else constant_offset
+                    offset_x_s+=offset_xx
+                    offset_y_s+=offset_yy
+
+                    s_img_sample = self.transform(image=s_img[offset_yy:offset_y_s, 
+                                                              offset_xx:offset_x_s])
+                    s_img_input = s_img_sample['image']
+                    s_img_input = s_img_input.unsqueeze(0)
+
+                    source_embeddings = self.get_embeddings(s_img_input)
+
+                    target_data_loader = self.get_patches_dataloader(t_img, is_horizontal, False)
+                    target_embeddings, target_coordinates = self.get_tiles_embeddings(target_data_loader)
+
+                    cosine_sim_matrix = cosine_similarity(source_embeddings, target_embeddings)
+                    max_similar = np.unravel_index(np.argmax(cosine_sim_matrix), cosine_sim_matrix.shape)
+
+                    target_coords_best = target_coordinates[max_similar[1]]
+
+                    s_coords = (offset_xx, offset_yy), (offset_x_s, offset_y_s)
+                    t_coords = xywh2xyxy(target_coords_best)
+                        
+                else:
+                    source_data_loader = self.get_patches_dataloader(s_img, is_horizontal, is_multidirect)
+                    target_data_loader = self.get_patches_dataloader(t_img, is_horizontal, is_multidirect)
+
+                    source_embeddings, source_coordinates = self.get_tiles_embeddings(source_data_loader)
+                    target_embeddings, target_coordinates = self.get_tiles_embeddings(target_data_loader)
+
+                    cosine_sim_matrix = cosine_similarity(source_embeddings, target_embeddings)
+                    max_similar = np.unravel_index(np.argmax(cosine_sim_matrix), cosine_sim_matrix.shape)
+
+                    source_coords_best = source_coordinates[max_similar[0]]
+                    target_coords_best = target_coordinates[max_similar[1]]
+
+                    s_coords = xywh2xyxy(source_coords_best) 
+                    t_coords = xywh2xyxy(target_coords_best)
 
                 if self.save_steps_vis:
                     source_image_vis = draw_visualization(s_img, s_coords, color=(0,255,0))
@@ -360,16 +446,12 @@ class PatchStitcher:
                     if im_i==0:
                         stitched_image = np.concatenate([t_img[:, :t_coords[1][0],:], s_img[:, s_coords[1][0]:, :]], axis=1)
                     else:
-                        # st_h, st_w, st_c = stitched_image.shape
-                        # stitched_image = cv2.resize(stitched_image, (st_w, t_img.shape[0]))
                         stitched_image, t_img = make_border(stitched_image, t_img, is_horizontal)
                         stitched_image = np.concatenate([t_img[:, :t_coords[1][0],:], stitched_image[:, s_coords[1][0]:, :]], axis=1)
                 else:
                     if im_i==0:
                         stitched_image = np.concatenate([t_img[:t_coords[1][1], :,:], s_img[s_coords[1][1]:, :, :]], axis=0)
                     else:
-                        # st_h, st_w, st_c = stitched_image.shape
-                        # stitched_image = cv2.resize(stitched_image, (t_img.shape[1], st_h))
                         stitched_image, t_img = make_border(stitched_image, t_img, is_horizontal)
                         stitched_image = np.concatenate([t_img[:t_coords[1][1], :,:], stitched_image[s_coords[1][1]:, :, :]], axis=0)
             else:

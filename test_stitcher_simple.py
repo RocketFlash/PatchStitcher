@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 from os.path import isfile
 from patch_stitcher.utils import get_device
-from patch_stitcher.patch_stitcher import PatchStitcher
+from patch_stitcher.patch_stitcher_simple import PatchStitcher
 import json
 import shutil
 
@@ -29,7 +29,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', default=None, help='path to the pretrained model')
     parser.add_argument('--source', type=str, default='', help='images folder path')
-    parser.add_argument('--emb_input_size', type=int, default=400, help='embeddings network input size')
     parser.add_argument('--window_size', type=int, default=500, help='tiles window size')
     parser.add_argument('--step_size', type=int, default=10, help='tiles step size')
     parser.add_argument('--batch_size', type=int, default=50, help='embeddings network batch size')
@@ -38,14 +37,9 @@ if __name__ == '__main__':
     parser.add_argument('--device', type=str, default='', help='device')
     parser.add_argument('--multidirect', action='store_true', help='use multidirection search')
     parser.add_argument('--save_vis', type=bool, default=True, help='save stitcher steps visualization')
-    parser.add_argument('--use_loftr', action='store_true', help='use loftr for homography calculation')
-    parser.add_argument('--use_dhe', action='store_true', help='use deep homography estimation')
-    parser.add_argument('--use_sift', action='store_true', help='use SIFT')
     parser.add_argument('--pyramid_search', action='store_true', help='use pyramid search')
     parser.add_argument('--fast_search', action='store_true', help='use fast search')
-    parser.add_argument('--use_kp_filtering', action='store_true', help='use keypoint filtering')
-    parser.add_argument('--no_metric', action='store_true', help='do not use metric learning')
-    parser.add_argument('--loftr_conf_thresh', type=float, default=0, help='loftr confidence threshold')
+    parser.add_argument('--use_dht', action='store_true', help='use dht')
     parser.add_argument('--exp_name', type=str, default='exp1', help='name of experiment')
     parser.add_argument('--tmp', default="./results", help='tmp')
     args = parser.parse_args()
@@ -83,15 +77,10 @@ if __name__ == '__main__':
                              batch_size=args.batch_size,
                              num_workers=args.num_workers,
                              vis_save_path=args.tmp,
-                             use_loftr=args.use_loftr,
-                             use_sift=args.use_sift,
-                             use_dhe=args.use_dhe,
-                             use_metric=not args.no_metric,
-                             use_kp_filtering=args.use_kp_filtering,
                              pyramid_search=args.pyramid_search,
                              fast_search=args.fast_search,
-                             loftr_conf_thresh=args.loftr_conf_thresh,
-                             save_vis=args.save_vis)
+                             save_vis=args.save_vis,
+                             use_dht=args.use_dht)
 
     
     for call_idx in range(4):
